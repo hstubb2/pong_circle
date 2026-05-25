@@ -149,7 +149,7 @@ func process_damage():
                         for j in range(blocks.size()):
                             if j != idx:
                                 var other = blocks[j]
-                                if (other.state == "normal" or other.state == "spawning") and other.pos.distance_to(b.pos) <= block_size * 2.5:
+                                if (other.state == "normal" or other.state == "spawning") and other.pos.distance_to(b.pos) <= block_size * 3.0:
                                     queue_damage(j, 1)
 
 func _input(event):
@@ -364,7 +364,7 @@ func _draw():
         
         # Explosion logic for mines
         if b.type == "mine" and b.state == "disintegrating":
-            var expl_radius = (block_size * 2.5) * (1.0 - b.anim_timer)
+            var expl_radius = (block_size * 3.0) * (1.0 - b.anim_timer)
             var expl_color = Color(1, 0, 0, alpha)
             draw_circle(b.pos, expl_radius, expl_color)
         
