@@ -18,12 +18,14 @@ var paddle_thickness: float = 12.0
 
 # Game State
 var score: int = 0
+var paddle_hits: int = 0
 var is_paused: bool = false
 
 # Obstacles
 var blocks: Array[Dictionary] = []
 var block_size: float = 40.0
 var block_style: StyleBoxFlat
+var damage_queue: Array[Dictionary] = []
 
 func _ready():
     # Find the center of the screen
@@ -31,7 +33,6 @@ func _ready():
     
     # Initialize the programmatic rounded square style
     block_style = StyleBoxFlat.new()
-    block_style.bg_color = Color.YELLOW
     block_style.corner_radius_top_left = 8
     block_style.corner_radius_top_right = 8
     block_style.corner_radius_bottom_right = 8
@@ -43,7 +44,9 @@ func start_game():
     ball_pos = center
     ball_speed = base_ball_speed
     score = 0
+    paddle_hits = 0
     blocks.clear()
+    damage_queue.clear()
     
     # Shoot the ball in a random direction
     var random_angle = randf_range(0, TAU)
@@ -77,12 +80,60 @@ func spawn_blocks(count: int):
             tries += 1
             
         if valid_pos:
+            var roll = randf()
+            var type = "yellow"
+            var max_hp = 2
+            
+            if roll <= 0.15: # 15% Mine
+                type = "mine"
+                max_hp = 1
+            elif roll <= 0.40: # 25% Orange
+                type = "orange"
+                max_hp = 3
+                
             blocks.append({
                 "pos": b_pos,
-                "hp": 2,
+                "hp": max_hp,
+                "max_hp": max_hp,
+                "type": type,
                 "anim_timer": 0.0,
                 "state": "spawning" # spawning -> normal -> disintegrating
             })
+
+func queue_damage(block_index: int, amount: int):
+    damage_queue.append({"index": block_index, "amount": amount})
+
+func process_damage():
+    # Safely handle potential chain reactions (mines hitting mines)
+    var safety_limit = 100
+    var loops = 0
+    while damage_queue.size() > 0 and loops < safety_limit:
+        loops += 1
+        var dmg = damage_queue.pop_front()
+        var idx = dmg.index
+        
+        if idx >= 0 and idx < blocks.size():
+            var b = blocks[idx]
+            if b.state == "normal" or b.state == "spawning":
+                b.hp -= dmg.amount
+                if b.hp <= 0:
+                    b.state = "disintegrating"
+                    b.anim_timer = 1.0 # start fade out
+                    
+                    # Scoring Rules
+                    if b.type == "yellow":
+                        score += 1
+                    elif b.type == "orange":
+                        score += 2
+                    # Mines add 0 score
+                    
+                    # Mine AoE Explosion Logic
+                    if b.type == "mine":
+                        for j in range(blocks.size()):
+                            if j != idx:
+                                var other = blocks[j]
+                                if (other.state == "normal" or other.state == "spawning") and other.pos.distance_to(b.pos) <= block_size * 2.5:
+                                    queue_damage(j, 1)
 
 func _input(event):
     if event.is_action_pressed("ui_accept"): # Press Space/Enter to pause
@@ -107,12 +158,12 @@ func _process(delta):
         queue_redraw()
         return
         
-    # Keyboard movement (Left/Right arrows or A/D)
+    # Keyboard movement (Left/Right arrows or A/D) (Inverted)
     var input_axis = Input.get_axis("ui_left", "ui_right")
     if input_axis != 0.0:
         paddle_angle -= input_axis * delta * 4.0
         
-    # Block Logic & Collision
+    # Process block state animations
     var blocks_to_remove = []
     for i in range(blocks.size()):
         var b = blocks[i]
@@ -126,9 +177,13 @@ func _process(delta):
             b.anim_timer -= delta * 3.0
             if b.anim_timer <= 0.0:
                 blocks_to_remove.append(i)
-                continue
-                
-        # Collision (Circle vs AABB)
+    
+    # Move the ball
+    ball_pos += ball_vel * delta
+    
+    # Ball vs Blocks Collision (Circle vs AABB)
+    for i in range(blocks.size()):
+        var b = blocks[i]
         if b.state == "normal" or b.state == "spawning":
             var half_size = block_size / 2.0
             var rect_min = b.pos - Vector2(half_size, half_size)
@@ -138,40 +193,34 @@ func _process(delta):
             var dist = ball_pos.distance_to(closest)
             
             if dist <= ball_radius:
-                # Hit Block
-                b.hp -= 1
-                if b.hp <= 0:
-                    b.state = "disintegrating"
-                    b.anim_timer = 1.0 # start fade out
-                
-                # Calculate bounce normal off flat edge or corner
+                # Bounce
                 var normal = Vector2.ZERO
                 if ball_pos == closest:
                     normal = (ball_pos - b.pos).normalized() # inside block fallback
                 else:
                     normal = (ball_pos - closest).normalized()
                 
-                # Prevent getting stuck by only bouncing if moving into the block
+                # Prevent getting stuck
                 if ball_vel.dot(normal) < 0:
                     ball_vel = ball_vel.bounce(normal)
                     ball_pos = closest + normal * (ball_radius + 1.0)
-                    # Tiny speedup for hitting obstacles
                     ball_speed += 2.0
                     ball_vel = ball_vel.normalized() * ball_speed
+                    
+                    # Queue damage to this block
+                    queue_damage(i, 1)
+                    
+    # Resolve all pending damage from ball hits and mine explosions
+    process_damage()
 
     # Remove destroyed blocks
     for i in range(blocks_to_remove.size() - 1, -1, -1):
         blocks.remove_at(blocks_to_remove[i])
         
-    # Move the ball
-    ball_pos += ball_vel * delta
-    
     # Arena/Paddle Collision Logic
     var dist = ball_pos.distance_to(center)
     if dist >= arena_radius - ball_radius:
         var angle_to_ball = (ball_pos - center).angle()
-        
-        # Calculate angular difference between ball and paddle
         var diff = wrapf(angle_to_ball - paddle_angle, -PI, PI)
         
         # If the ball hits the neon green arc
@@ -179,39 +228,35 @@ func _process(delta):
             var normal = (center - ball_pos).normalized()
             ball_vel = ball_vel.bounce(normal)
             
-            # ADD VARIANCE: slightly rotate the velocity to prevent straight loops
+            # Variance
             var variance = randf_range(-0.15, 0.15)
             ball_vel = ball_vel.rotated(variance)
             
-            # Increase speed on hit
             ball_speed += 10.0
             ball_vel = ball_vel.normalized() * ball_speed
-            
-            # Nudge the ball back inside the circle to prevent sticking
             ball_pos = center + (normal * -(arena_radius - ball_radius - 1))
             
-            # Increment score & Handle block spawning
-            score += 1
-            if score == 2:
+            # Handle block spawning based on successful paddle hits
+            paddle_hits += 1
+            if paddle_hits == 2:
                 spawn_blocks(1)
-            elif score > 2:
+            elif paddle_hits > 2:
                 var roll = randf()
                 if roll <= 0.05:
                     spawn_blocks(2)
-                elif roll <= 0.30: # 5% to 30% = 25% chance
+                elif roll <= 0.30:
                     spawn_blocks(1)
         else:
-            # Player missed, restart immediately
+            # Missed
             start_game()
             
-    # Force the engine to redraw the graphics every frame
     queue_redraw()
 
 func _draw():
-    # Draw Black Void Background
+    # Background
     draw_rect(get_viewport_rect(), Color.BLACK)
     
-    # Draw White Arena Outline
+    # Arena Outline
     draw_arc(center, arena_radius, 0, TAU, 128, Color.WHITE, 4.0, true)
     
     # Draw Blocks
@@ -220,26 +265,34 @@ func _draw():
         var alpha = 1.0
         
         if b.state == "spawning":
-            # Rapid blink (blinks 3 times over 1 second)
             alpha = abs(sin(b.anim_timer * TAU * 3.0))
         elif b.state == "disintegrating":
-            # Expand and fade
             size_mult = 1.0 + (1.0 - b.anim_timer) * 0.6
             alpha = b.anim_timer
             
         var current_size = block_size * size_mult
         var rect = Rect2(b.pos - Vector2(current_size/2.0, current_size/2.0), Vector2(current_size, current_size))
         
-        var c = Color.YELLOW
+        # Assign Color based on Type
+        var base_color = Color.YELLOW
+        if b.type == "orange":
+            base_color = Color.ORANGE
+        elif b.type == "mine":
+            base_color = Color("9932CC") # Purple
+            
+        var c = base_color
         c.a = alpha
         block_style.bg_color = c
         draw_style_box(block_style, rect)
         
-        # Draw "Cracked" lines if hp is 1
-        if b.hp == 1 and b.state != "disintegrating":
+        # Draw "Cracked" lines based on missing HP
+        if b.state != "disintegrating":
+            var missing_hp = b.max_hp - b.hp
             var crack_color = Color(0, 0, 0, alpha)
-            draw_line(b.pos + Vector2(-current_size*0.3, -current_size*0.4), b.pos + Vector2(current_size*0.1, current_size*0.1), crack_color, 3.0)
-            draw_line(b.pos + Vector2(current_size*0.1, current_size*0.1), b.pos + Vector2(-current_size*0.2, current_size*0.4), crack_color, 2.0)
+            if missing_hp >= 1:
+                draw_line(b.pos + Vector2(-current_size*0.3, -current_size*0.4), b.pos + Vector2(current_size*0.1, current_size*0.1), crack_color, 3.0)
+            if missing_hp >= 2:
+                draw_line(b.pos + Vector2(current_size*0.1, current_size*0.1), b.pos + Vector2(-current_size*0.2, current_size*0.4), crack_color, 2.0)
     
     # Draw Red Ball
     draw_circle(ball_pos, ball_radius, Color.RED)
@@ -256,7 +309,7 @@ func _draw():
     var text_pos = center - Vector2(text_size.x / 2.0, -text_size.y / 4.0)
     draw_string(default_font, text_pos, str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, Color.WHITE)
     
-    # Draw Pause Overlay
+    # Pause Overlay
     if is_paused:
         draw_rect(get_viewport_rect(), Color(0, 0, 0, 0.5))
         var pause_text = "PAUSED"
