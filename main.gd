@@ -117,13 +117,13 @@ func spawn_blocks(count: int):
             var type = "yellow"
             var max_hp = 2
             
-            if roll <= 0.05: # 5% Life
+            if roll <= 0.10: # 10% Life
                 type = "life"
                 max_hp = 1
-            elif roll <= 0.20: # 15% Mine
+            elif roll <= 0.25: # 15% Mine
                 type = "mine"
                 max_hp = 1
-            elif roll <= 0.45: # 25% Orange
+            elif roll <= 0.50: # 25% Orange
                 type = "orange"
                 max_hp = 3
                 
