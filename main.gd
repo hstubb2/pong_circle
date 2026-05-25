@@ -67,6 +67,24 @@ func start_game():
     var random_angle = randf_range(0, TAU)
     ball_vel = Vector2(cos(random_angle), sin(random_angle)) * ball_speed
 
+func get_rounded_triangle_points(draw_pos: Vector2, size: float) -> PackedVector2Array:
+    var r = size * 0.3 # corner radius
+    # Triangle centers
+    var c1 = draw_pos + Vector2(0, -size + r)
+    var c2 = draw_pos + Vector2(-size + r, size - r)
+    var c3 = draw_pos + Vector2(size - r, size - r)
+    
+    var all_pts = PackedVector2Array()
+    var steps = 12
+    for i in range(steps):
+        var ang = (i / float(steps)) * TAU
+        var dir = Vector2(cos(ang), sin(ang))
+        all_pts.append(c1 + dir * r)
+        all_pts.append(c2 + dir * r)
+        all_pts.append(c3 + dir * r)
+        
+    return Geometry2D.convex_hull(all_pts)
+
 func spawn_blocks(count: int):
     for i in range(count):
         var valid_pos = false
@@ -99,10 +117,13 @@ func spawn_blocks(count: int):
             var type = "yellow"
             var max_hp = 2
             
-            if roll <= 0.15: # 15% Mine
+            if roll <= 0.05: # 5% Life
+                type = "life"
+                max_hp = 1
+            elif roll <= 0.20: # 15% Mine
                 type = "mine"
                 max_hp = 1
-            elif roll <= 0.40: # 25% Orange
+            elif roll <= 0.45: # 25% Orange
                 type = "orange"
                 max_hp = 3
                 
@@ -146,6 +167,9 @@ func process_damage():
                         score += 1 * current_multiplier
                     elif b.type == "orange":
                         score += 2 * current_multiplier
+                    elif b.type == "life":
+                        if lives < 3:
+                            lives += 1
                     # Mines add 0 score
                     
                     # Mine AoE Explosion Logic
@@ -261,9 +285,20 @@ func _process(delta):
         var p = field_powerups[i]
         p.anim_timer += delta
         if p.pos.distance_to(ball_pos) <= ball_radius + 22.0: # Powerup hit radius
-            var picked_type = "2x" if randf() < 0.5 else "trajectory"
+            var roll = randf()
+            var picked_type = "2x"
+            if roll < 0.25: picked_type = "2x"
+            elif roll < 0.50: picked_type = "trajectory"
+            elif roll < 0.75: picked_type = "twin"
+            else: picked_type = "triplet"
+            
             active_powerups.append({"type": picked_type, "timer": 10.0})
-            splash_text = "2X" if picked_type == "2x" else "PATH"
+            
+            if picked_type == "2x": splash_text = "2X"
+            elif picked_type == "trajectory": splash_text = "PATH"
+            elif picked_type == "twin": splash_text = "TWIN"
+            elif picked_type == "triplet": splash_text = "TRIPLET"
+            
             splash_text_timer = 1.0
             field_powerups.remove_at(i)
         
@@ -281,6 +316,8 @@ func _process(delta):
             b.anim_timer -= delta * 3.0
             if b.anim_timer <= 0.0:
                 blocks_to_remove.append(i)
+        elif b.state == "normal" and b.type == "life":
+            b.anim_timer += delta
     
     # Move the ball
     ball_pos += ball_vel * delta
@@ -325,12 +362,29 @@ func _process(delta):
     var dist = ball_pos.distance_to(center)
     if dist >= arena_radius - ball_radius:
         var angle_to_ball = (ball_pos - center).angle()
-        var diff = wrapf(angle_to_ball - paddle_angle, -PI, PI)
         
+        # Build list of active paddle angles
+        var has_twin = false
+        var has_triplet = false
+        for p in active_powerups:
+            if p.type == "twin": has_twin = true
+            elif p.type == "triplet": has_triplet = true
+            
+        var active_angles = [paddle_angle]
+        if has_twin:
+            active_angles.append(paddle_angle + PI)
+        if has_triplet:
+            active_angles.append(paddle_angle + deg_to_rad(120.0))
+            active_angles.append(paddle_angle - deg_to_rad(120.0))
+            
         var is_hit = false
-        if abs(diff) <= paddle_width / 2.0:
-            is_hit = true
-        else:
+        for ang in active_angles:
+            var diff = wrapf(angle_to_ball - ang, -PI, PI)
+            if abs(diff) <= paddle_width / 2.0:
+                is_hit = true
+                break
+                
+        if not is_hit:
             if lives > 0:
                 lives -= 1
                 arena_flash_timer = 1.0
@@ -400,6 +454,20 @@ func _draw():
         alpha *= fade_alpha
             
         var current_size = block_size * size_mult
+        
+        # If Life block, custom draw
+        if b.type == "life":
+            var pulse = 1.0
+            if b.state == "normal": pulse = 1.0 + sin(b.anim_timer * 10.0) * 0.15
+            var l_size = (current_size * 0.5) * pulse
+            var life_color = Color("00ff00")
+            life_color.a *= alpha
+            draw_circle(b.pos, l_size, life_color)
+            var black_color = Color.BLACK
+            black_color.a *= alpha
+            draw_circle(b.pos, l_size - 4.0, black_color)
+            continue
+            
         var rect = Rect2(b.pos - Vector2(current_size/2.0, current_size/2.0), Vector2(current_size, current_size))
         
         # Assign Color based on Type
@@ -447,10 +515,12 @@ func _draw():
     
     # Trajectory Powerup Drawing
     var has_trajectory = false
+    var has_twin = false
+    var has_triplet = false
     for p in active_powerups:
-        if p.type == "trajectory":
-            has_trajectory = true
-            break
+        if p.type == "trajectory": has_trajectory = true
+        elif p.type == "twin": has_twin = true
+        elif p.type == "triplet": has_triplet = true
             
     if has_trajectory and not is_game_over:
         var path = predict_trajectory(2)
@@ -460,31 +530,23 @@ func _draw():
             for i in range(path.size() - 1):
                 draw_dashed_line(path[i], path[i+1], path_color, 2.0, 10.0)
     
-    # Draw Field Powerups
+    # Draw Field Powerups with Rounded Geometry
     for p in field_powerups:
         var pulse = 1.0 + sin(p.anim_timer * 5.0) * 0.2
         var bob = sin(p.anim_timer * 3.0) * 5.0
         var draw_pos = p.pos + Vector2(0, bob)
-        var p_size = 22.0 * pulse # Increased size
+        var p_size = 22.0 * pulse
         
         var neon_blue = Color("00ffff")
         
-        # Draw Neon Glow Layer
-        var glow_points = PackedVector2Array([
-            draw_pos + Vector2(0, -p_size * 1.4),
-            draw_pos + Vector2(-p_size * 1.4, p_size * 1.4),
-            draw_pos + Vector2(p_size * 1.4, p_size * 1.4)
-        ])
+        # Draw Neon Glow Layer (Rounded)
+        var glow_points = get_rounded_triangle_points(draw_pos, p_size * 1.4)
         var glow_color = neon_blue
         glow_color.a = 0.3 * fade_alpha
         draw_colored_polygon(glow_points, glow_color)
         
-        # Draw Core Triangle
-        var points = PackedVector2Array([
-            draw_pos + Vector2(0, -p_size),
-            draw_pos + Vector2(-p_size, p_size),
-            draw_pos + Vector2(p_size, p_size)
-        ])
+        # Draw Core Triangle (Rounded)
+        var points = get_rounded_triangle_points(draw_pos, p_size)
         var core_color = neon_blue
         core_color.a *= fade_alpha
         draw_colored_polygon(points, core_color)
@@ -494,16 +556,32 @@ func _draw():
     ball_color.a *= fade_alpha
     draw_circle(ball_pos, ball_radius, ball_color)
     
-    # Draw Neon Green Paddle
-    var start_angle = paddle_angle - paddle_width / 2.0
-    var end_angle = paddle_angle + paddle_width / 2.0
+    # Draw Paddles
     var paddle_color = Color("00ff00")
     paddle_color.a *= fade_alpha
+    var clone_color = Color.BLUE
+    clone_color.a *= fade_alpha
+    
+    # Main Paddle
+    var start_angle = paddle_angle - paddle_width / 2.0
+    var end_angle = paddle_angle + paddle_width / 2.0
     draw_arc(center, arena_radius, start_angle, end_angle, 64, paddle_color, paddle_thickness, true)
+    
+    # Twin Clone
+    if has_twin:
+        var ang = paddle_angle + PI
+        draw_arc(center, arena_radius, ang - paddle_width / 2.0, ang + paddle_width / 2.0, 64, clone_color, paddle_thickness, true)
+        
+    # Triplet Clones
+    if has_triplet:
+        var ang1 = paddle_angle + deg_to_rad(120.0)
+        draw_arc(center, arena_radius, ang1 - paddle_width / 2.0, ang1 + paddle_width / 2.0, 64, clone_color, paddle_thickness, true)
+        var ang2 = paddle_angle - deg_to_rad(120.0)
+        draw_arc(center, arena_radius, ang2 - paddle_width / 2.0, ang2 + paddle_width / 2.0, 64, clone_color, paddle_thickness, true)
     
     var default_font = ThemeDB.fallback_font
     
-    # Draw Splash Text (e.g. "2X")
+    # Draw Splash Text
     if splash_text_timer > 0.0:
         var f_size = 128
         var s_size = default_font.get_string_size(splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size)
@@ -536,7 +614,10 @@ func _draw():
     var timer_color = Color.WHITE
     timer_color.a *= fade_alpha
     for p in active_powerups:
-        var title = "2x" if p.type == "2x" else "Path"
+        var title = "2x"
+        if p.type == "trajectory": title = "Path"
+        elif p.type == "twin": title = "Twin"
+        elif p.type == "triplet": title = "Trip"
         var time_str = "%s: 00:%02d" % [title, int(p.timer)]
         draw_string(default_font, Vector2(right_x, y_offset), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, timer_color)
         y_offset += 40
