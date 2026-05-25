@@ -304,8 +304,8 @@ func _process(delta):
                 elif roll <= 0.30:
                     spawn_blocks(1)
                     
-                # 2% chance to spawn Powerup
-                if randf() <= 0.02:
+                # 7% chance to spawn Powerup
+                if randf() <= 0.07:
                     var r = randf_range(0, 200)
                     var ang = randf_range(0, TAU)
                     var p_pos = center + Vector2(cos(ang), sin(ang)) * r
@@ -313,15 +313,19 @@ func _process(delta):
         else:
             # Missed completely (0 lives left)
             is_game_over = true
-            game_over_timer = 1.0
+            game_over_timer = 0.5 # Fade out duration
             
     queue_redraw()
 
 func _draw():
+    var fade_alpha = 1.0
+    if is_game_over:
+        fade_alpha = max(0.0, game_over_timer / 0.5)
+
     # Background
     draw_rect(get_viewport_rect(), Color.BLACK)
     
-    # Draw Blocks (always visible, even during game over)
+    # Draw Blocks
     for b in blocks:
         var size_mult = 1.0
         var alpha = 1.0
@@ -331,6 +335,8 @@ func _draw():
         elif b.state == "disintegrating":
             size_mult = 1.0 + (1.0 - b.anim_timer) * 0.6
             alpha = b.anim_timer
+            
+        alpha *= fade_alpha
             
         var current_size = block_size * size_mult
         var rect = Rect2(b.pos - Vector2(current_size/2.0, current_size/2.0), Vector2(current_size, current_size))
@@ -359,7 +365,7 @@ func _draw():
         # Explosion logic for mines
         if b.type == "mine" and b.state == "disintegrating":
             var expl_radius = (block_size * 2.5) * (1.0 - b.anim_timer)
-            var expl_color = Color(1, 0, 0, b.anim_timer)
+            var expl_color = Color(1, 0, 0, alpha)
             draw_circle(b.pos, expl_radius, expl_color)
         
         # Draw "Cracked" lines based on missing HP
@@ -371,13 +377,11 @@ func _draw():
             if missing_hp >= 2:
                 draw_line(b.pos + Vector2(current_size*0.1, current_size*0.1), b.pos + Vector2(-current_size*0.2, current_size*0.4), crack_color, 2.0)
                 
-    if is_game_over:
-        return # Skip drawing the rest of the game components during death delay
-        
     # Arena Outline
     var arena_color = Color.WHITE
     if arena_flash_timer > 0.0:
         arena_color = Color.RED.lerp(Color.WHITE, 1.0 - arena_flash_timer)
+    arena_color.a *= fade_alpha
     draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
     
     # Draw Field Powerups
@@ -391,15 +395,21 @@ func _draw():
             draw_pos + Vector2(-p_size, p_size),
             draw_pos + Vector2(p_size, p_size)
         ])
-        draw_colored_polygon(points, Color.LIGHT_BLUE)
+        var cyan_color = Color.CYAN
+        cyan_color.a *= fade_alpha
+        draw_colored_polygon(points, cyan_color)
     
     # Draw Red Ball
-    draw_circle(ball_pos, ball_radius, Color.RED)
+    var ball_color = Color.RED
+    ball_color.a *= fade_alpha
+    draw_circle(ball_pos, ball_radius, ball_color)
     
     # Draw Neon Green Paddle
     var start_angle = paddle_angle - paddle_width / 2.0
     var end_angle = paddle_angle + paddle_width / 2.0
-    draw_arc(center, arena_radius, start_angle, end_angle, 64, Color("00ff00"), paddle_thickness, true)
+    var paddle_color = Color("00ff00")
+    paddle_color.a *= fade_alpha
+    draw_arc(center, arena_radius, start_angle, end_angle, 64, paddle_color, paddle_thickness, true)
     
     var default_font = ThemeDB.fallback_font
     
@@ -408,30 +418,36 @@ func _draw():
         var f_size = 128
         var s_size = default_font.get_string_size(splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size)
         var s_pos = center - Vector2(s_size.x / 2.0, -s_size.y / 4.0)
-        draw_string(default_font, s_pos, splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size, Color(1, 1, 1, splash_text_timer))
+        var splash_color = Color(1, 1, 1, splash_text_timer * fade_alpha)
+        draw_string(default_font, s_pos, splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size, splash_color)
     
     # Draw Score
     var font_size = 64
     var text_size = default_font.get_string_size(str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
     var text_pos = center - Vector2(text_size.x / 2.0, -text_size.y / 4.0)
-    draw_string(default_font, text_pos, str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, Color.WHITE)
+    var score_color = Color.WHITE
+    score_color.a *= fade_alpha
+    draw_string(default_font, text_pos, str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, score_color)
     
     # Draw Lives HUD
     var hud_center = Vector2(50, 50)
     var hud_radius = 15.0
     var arc_length = (TAU / 3.0) - 0.2
+    var hud_color = Color("00ff00")
+    hud_color.a *= fade_alpha
     for i in range(lives):
         var arc_start = i * (TAU / 3.0)
         var arc_end = arc_start + arc_length
-        draw_arc(hud_center, hud_radius, arc_start, arc_end, 16, Color("00ff00"), 4.0, true)
+        draw_arc(hud_center, hud_radius, arc_start, arc_end, 16, hud_color, 4.0, true)
         
     # Draw Powerup Timers HUD
     var right_x = get_viewport_rect().size.x - 150
     var y_offset = 50
+    var timer_color = Color.WHITE
+    timer_color.a *= fade_alpha
     for time_left in active_powerups:
         var time_str = "2x: 00:%02d" % int(time_left)
-        draw_string(default_font, Vector2(right_x, y_offset), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.WHITE)
-        y_offset += 40
+        draw_string(default_font, Vector2(right_x, y_offset), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, timer_color)
     
     # Pause Overlay
     if is_paused:
