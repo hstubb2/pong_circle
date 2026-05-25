@@ -203,7 +203,7 @@ func _process(delta):
     for i in range(field_powerups.size() - 1, -1, -1):
         var p = field_powerups[i]
         p.anim_timer += delta
-        if p.pos.distance_to(ball_pos) <= ball_radius + 15.0: # Powerup hit radius
+        if p.pos.distance_to(ball_pos) <= ball_radius + 22.0: # Powerup hit radius
             active_powerups.append(10.0)
             splash_text = "2X"
             splash_text_timer = 1.0
@@ -389,15 +389,29 @@ func _draw():
         var pulse = 1.0 + sin(p.anim_timer * 5.0) * 0.2
         var bob = sin(p.anim_timer * 3.0) * 5.0
         var draw_pos = p.pos + Vector2(0, bob)
-        var p_size = 15.0 * pulse
+        var p_size = 22.0 * pulse # Increased size
+        
+        var neon_blue = Color("00ffff")
+        
+        # Draw Neon Glow Layer
+        var glow_points = PackedVector2Array([
+            draw_pos + Vector2(0, -p_size * 1.4),
+            draw_pos + Vector2(-p_size * 1.4, p_size * 1.4),
+            draw_pos + Vector2(p_size * 1.4, p_size * 1.4)
+        ])
+        var glow_color = neon_blue
+        glow_color.a = 0.3 * fade_alpha
+        draw_colored_polygon(glow_points, glow_color)
+        
+        # Draw Core Triangle
         var points = PackedVector2Array([
             draw_pos + Vector2(0, -p_size),
             draw_pos + Vector2(-p_size, p_size),
             draw_pos + Vector2(p_size, p_size)
         ])
-        var cyan_color = Color.CYAN
-        cyan_color.a *= fade_alpha
-        draw_colored_polygon(points, cyan_color)
+        var core_color = neon_blue
+        core_color.a *= fade_alpha
+        draw_colored_polygon(points, core_color)
     
     # Draw Red Ball
     var ball_color = Color.RED
