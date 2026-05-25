@@ -33,7 +33,7 @@ var damage_queue: Array[Dictionary] = []
 
 # Powerups
 var field_powerups: Array[Dictionary] = []
-var active_powerups: Array[float] = []
+var active_powerups: Array[Dictionary] = []
 var splash_text_timer: float = 0.0
 var splash_text: String = ""
 
@@ -119,7 +119,11 @@ func queue_damage(block_index: int, amount: int):
     damage_queue.append({"index": block_index, "amount": amount})
 
 func process_damage():
-    var current_multiplier = int(pow(2, active_powerups.size()))
+    var multi_count = 0
+    for p in active_powerups:
+        if p.type == "2x":
+            multi_count += 1
+    var current_multiplier = int(pow(2, multi_count))
     
     # Safely handle potential chain reactions (mines hitting mines)
     var safety_limit = 100
@@ -151,6 +155,59 @@ func process_damage():
                                 var other = blocks[j]
                                 if (other.state == "normal" or other.state == "spawning") and other.pos.distance_to(b.pos) <= block_size * 3.0:
                                     queue_damage(j, 1)
+
+func predict_trajectory(max_bounces: int) -> Array[Vector2]:
+    var points: Array[Vector2] = []
+    points.append(ball_pos)
+    
+    var sim_pos = ball_pos
+    var sim_vel = ball_vel
+    var sim_delta = 0.016
+    var bounces = 0
+    var max_steps = 300 # Roughly 4.8 seconds of simulation
+    
+    for step in range(max_steps):
+        sim_pos += sim_vel * sim_delta
+        var bounced = false
+        
+        # Block check
+        for b in blocks:
+            if b.state == "normal" or b.state == "spawning":
+                var half_size = block_size / 2.0
+                var rect_min = b.pos - Vector2(half_size, half_size)
+                var rect_max = b.pos + Vector2(half_size, half_size)
+                
+                var closest = sim_pos.clamp(rect_min, rect_max)
+                if sim_pos.distance_to(closest) <= ball_radius:
+                    var normal = Vector2.ZERO
+                    if sim_pos == closest:
+                        normal = (sim_pos - b.pos).normalized()
+                    else:
+                        normal = (sim_pos - closest).normalized()
+                        
+                    if sim_vel.dot(normal) < 0:
+                        sim_vel = sim_vel.bounce(normal)
+                        bounced = true
+                        break
+                        
+        if not bounced:
+            # Arena check
+            if sim_pos.distance_to(center) >= arena_radius - ball_radius:
+                var normal = (center - sim_pos).normalized()
+                if sim_vel.dot(normal) < 0:
+                    sim_vel = sim_vel.bounce(normal)
+                    bounced = true
+                    
+        if bounced:
+            points.append(sim_pos)
+            bounces += 1
+            if bounces >= max_bounces:
+                break
+                
+    if bounces < max_bounces:
+        points.append(sim_pos)
+        
+    return points
 
 func _input(event):
     if event.is_action_pressed("ui_accept"): # Press Space/Enter to pause
@@ -195,8 +252,8 @@ func _process(delta):
         
     # Process active powerups
     for i in range(active_powerups.size() - 1, -1, -1):
-        active_powerups[i] -= delta
-        if active_powerups[i] <= 0.0:
+        active_powerups[i].timer -= delta
+        if active_powerups[i].timer <= 0.0:
             active_powerups.remove_at(i)
             
     # Process field powerups animations & collisions
@@ -204,8 +261,9 @@ func _process(delta):
         var p = field_powerups[i]
         p.anim_timer += delta
         if p.pos.distance_to(ball_pos) <= ball_radius + 22.0: # Powerup hit radius
-            active_powerups.append(10.0)
-            splash_text = "2X"
+            var picked_type = "2x" if randf() < 0.5 else "trajectory"
+            active_powerups.append({"type": picked_type, "timer": 10.0})
+            splash_text = "2X" if picked_type == "2x" else "PATH"
             splash_text_timer = 1.0
             field_powerups.remove_at(i)
         
@@ -290,7 +348,10 @@ func _process(delta):
             ball_vel = ball_vel.normalized() * ball_speed
             ball_pos = center + (normal * -(arena_radius - ball_radius - 1))
             
-            var current_multiplier = int(pow(2, active_powerups.size()))
+            var multi_count = 0
+            for p in active_powerups:
+                if p.type == "2x": multi_count += 1
+            var current_multiplier = int(pow(2, multi_count))
             score += 1 * current_multiplier # point per paddle bounce
             
             # Handle block and powerup spawning based on successful paddle hits
@@ -304,8 +365,8 @@ func _process(delta):
                 elif roll <= 0.30:
                     spawn_blocks(1)
                     
-                # 4% chance to spawn Powerup
-                if randf() <= 0.04:
+                # Temporarily increased to 25% chance to spawn Powerup for easier testing
+                if randf() <= 0.25:
                     var r = randf_range(0, 200)
                     var ang = randf_range(0, TAU)
                     var p_pos = center + Vector2(cos(ang), sin(ang)) * r
@@ -384,6 +445,21 @@ func _draw():
     arena_color.a *= fade_alpha
     draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
     
+    # Trajectory Powerup Drawing
+    var has_trajectory = false
+    for p in active_powerups:
+        if p.type == "trajectory":
+            has_trajectory = true
+            break
+            
+    if has_trajectory and not is_game_over:
+        var path = predict_trajectory(2)
+        if path.size() > 1:
+            var path_color = Color.LIGHT_GRAY
+            path_color.a *= fade_alpha
+            for i in range(path.size() - 1):
+                draw_dashed_line(path[i], path[i+1], path_color, 2.0, 10.0)
+    
     # Draw Field Powerups
     for p in field_powerups:
         var pulse = 1.0 + sin(p.anim_timer * 5.0) * 0.2
@@ -459,9 +535,11 @@ func _draw():
     var y_offset = 50
     var timer_color = Color.WHITE
     timer_color.a *= fade_alpha
-    for time_left in active_powerups:
-        var time_str = "2x: 00:%02d" % int(time_left)
+    for p in active_powerups:
+        var title = "2x" if p.type == "2x" else "Path"
+        var time_str = "%s: 00:%02d" % [title, int(p.timer)]
         draw_string(default_font, Vector2(right_x, y_offset), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, timer_color)
+        y_offset += 40
     
     # Pause Overlay
     if is_paused:
