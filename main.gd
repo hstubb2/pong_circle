@@ -19,6 +19,7 @@ var paddle_thickness: float = 12.0
 # Game State
 var score: int = 0
 var paddle_hits: int = 0
+var lives: int = 3
 var is_paused: bool = false
 
 # Obstacles
@@ -45,6 +46,7 @@ func start_game():
     ball_speed = base_ball_speed
     score = 0
     paddle_hits = 0
+    lives = 3
     blocks.clear()
     damage_queue.clear()
     
@@ -190,9 +192,9 @@ func _process(delta):
             var rect_max = b.pos + Vector2(half_size, half_size)
             
             var closest = ball_pos.clamp(rect_min, rect_max)
-            var dist = ball_pos.distance_to(closest)
+            var dist_block = ball_pos.distance_to(closest)
             
-            if dist <= ball_radius:
+            if dist_block <= ball_radius:
                 # Bounce
                 var normal = Vector2.ZERO
                 if ball_pos == closest:
@@ -223,8 +225,16 @@ func _process(delta):
         var angle_to_ball = (ball_pos - center).angle()
         var diff = wrapf(angle_to_ball - paddle_angle, -PI, PI)
         
-        # If the ball hits the neon green arc
+        var is_hit = false
         if abs(diff) <= paddle_width / 2.0:
+            is_hit = true
+        else:
+            if lives > 0:
+                lives -= 1
+                paddle_angle = angle_to_ball
+                is_hit = true
+                
+        if is_hit:
             var normal = (center - ball_pos).normalized()
             ball_vel = ball_vel.bounce(normal)
             
@@ -248,7 +258,7 @@ func _process(delta):
                 elif roll <= 0.30:
                     spawn_blocks(1)
         else:
-            # Missed
+            # Missed completely (0 lives)
             start_game()
             
     queue_redraw()
@@ -284,10 +294,25 @@ func _draw():
         var c = base_color
         c.a = alpha
         block_style.bg_color = c
+        
+        # If it's a mine, draw a rotated under-layer to make it spikey
+        if b.type == "mine":
+            draw_set_transform(b.pos, PI/4, Vector2.ONE)
+            var rect_centered = Rect2(-Vector2(current_size/2.0, current_size/2.0), Vector2(current_size, current_size))
+            draw_style_box(block_style, rect_centered)
+            draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+            
+        # Draw the standard orientation block
         draw_style_box(block_style, rect)
         
+        # Explosion logic for mines
+        if b.type == "mine" and b.state == "disintegrating":
+            var expl_radius = (block_size * 2.5) * (1.0 - b.anim_timer)
+            var expl_color = Color(1, 0, 0, b.anim_timer)
+            draw_circle(b.pos, expl_radius, expl_color)
+        
         # Draw "Cracked" lines based on missing HP
-        if b.state != "disintegrating":
+        if b.state != "disintegrating" and b.type != "mine":
             var missing_hp = b.max_hp - b.hp
             var crack_color = Color(0, 0, 0, alpha)
             if missing_hp >= 1:
@@ -309,6 +334,15 @@ func _draw():
     var text_size = default_font.get_string_size(str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
     var text_pos = center - Vector2(text_size.x / 2.0, -text_size.y / 4.0)
     draw_string(default_font, text_pos, str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, Color.WHITE)
+    
+    # Draw Lives HUD
+    var hud_center = Vector2(50, 50)
+    var hud_radius = 15.0
+    var arc_length = (TAU / 3.0) - 0.2
+    for i in range(lives):
+        var arc_start = i * (TAU / 3.0)
+        var arc_end = arc_start + arc_length
+        draw_arc(hud_center, hud_radius, arc_start, arc_end, 16, Color("00ff00"), 4.0, true)
     
     # Pause Overlay
     if is_paused:
