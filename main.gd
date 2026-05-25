@@ -304,8 +304,8 @@ func _process(delta):
                 elif roll <= 0.30:
                     spawn_blocks(1)
                     
-                # 7% chance to spawn Powerup
-                if randf() <= 0.07:
+                # 4% chance to spawn Powerup
+                if randf() <= 0.04:
                     var r = randf_range(0, 200)
                     var ang = randf_range(0, TAU)
                     var p_pos = center + Vector2(cos(ang), sin(ang)) * r
