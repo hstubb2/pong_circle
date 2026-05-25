@@ -110,7 +110,7 @@ func _process(delta):
     # Keyboard movement (Left/Right arrows or A/D)
     var input_axis = Input.get_axis("ui_left", "ui_right")
     if input_axis != 0.0:
-        paddle_angle += input_axis * delta * 4.0
+        paddle_angle -= input_axis * delta * 4.0
         
     # Block Logic & Collision
     var blocks_to_remove = []
