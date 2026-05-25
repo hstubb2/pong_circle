@@ -238,6 +238,7 @@ func _process(delta):
             
             # Handle block spawning based on successful paddle hits
             paddle_hits += 1
+            score += 1 # Added point per paddle bounce back
             if paddle_hits == 2:
                 spawn_blocks(1)
             elif paddle_hits > 2:
