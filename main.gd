@@ -203,6 +203,9 @@ func predict_trajectory(max_bounces: int) -> Array[Vector2]:
                 
                 var closest = sim_pos.clamp(rect_min, rect_max)
                 if sim_pos.distance_to(closest) <= ball_radius:
+                    if b.type == "life":
+                        continue
+                        
                     var normal = Vector2.ZERO
                     if sim_pos == closest:
                         normal = (sim_pos - b.pos).normalized()
@@ -334,6 +337,10 @@ func _process(delta):
             var dist_block = ball_pos.distance_to(closest)
             
             if dist_block <= ball_radius:
+                if b.type == "life":
+                    queue_damage(i, 1)
+                    continue
+                    
                 # Bounce
                 var normal = Vector2.ZERO
                 if ball_pos == closest:
