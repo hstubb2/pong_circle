@@ -21,6 +21,7 @@ var score: int = 0
 var paddle_hits: int = 0
 var lives: int = 3
 var is_paused: bool = false
+var arena_flash_timer: float = 0.0
 
 # Obstacles
 var blocks: Array[Dictionary] = []
@@ -166,6 +167,9 @@ func _process(delta):
         paddle_angle -= input_axis * delta * 4.0
         
     # Process block state animations
+    if arena_flash_timer > 0.0:
+        arena_flash_timer -= delta * 3.0
+        
     var blocks_to_remove = []
     for i in range(blocks.size()):
         var b = blocks[i]
@@ -231,7 +235,7 @@ func _process(delta):
         else:
             if lives > 0:
                 lives -= 1
-                paddle_angle = angle_to_ball
+                arena_flash_timer = 1.0
                 is_hit = true
                 
         if is_hit:
@@ -268,7 +272,10 @@ func _draw():
     draw_rect(get_viewport_rect(), Color.BLACK)
     
     # Arena Outline
-    draw_arc(center, arena_radius, 0, TAU, 128, Color.WHITE, 4.0, true)
+    var arena_color = Color.WHITE
+    if arena_flash_timer > 0.0:
+        arena_color = Color.RED.lerp(Color.WHITE, 1.0 - arena_flash_timer)
+    draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
     
     # Draw Blocks
     for b in blocks:
