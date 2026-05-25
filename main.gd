@@ -22,12 +22,20 @@ var paddle_hits: int = 0
 var lives: int = 3
 var is_paused: bool = false
 var arena_flash_timer: float = 0.0
+var is_game_over: bool = false
+var game_over_timer: float = 0.0
 
 # Obstacles
 var blocks: Array[Dictionary] = []
 var block_size: float = 40.0
 var block_style: StyleBoxFlat
 var damage_queue: Array[Dictionary] = []
+
+# Powerups
+var field_powerups: Array[Dictionary] = []
+var active_powerups: Array[float] = []
+var splash_text_timer: float = 0.0
+var splash_text: String = ""
 
 func _ready():
     # Find the center of the screen
@@ -48,8 +56,12 @@ func start_game():
     score = 0
     paddle_hits = 0
     lives = 3
+    is_game_over = false
     blocks.clear()
     damage_queue.clear()
+    field_powerups.clear()
+    active_powerups.clear()
+    splash_text_timer = 0.0
     
     # Shoot the ball in a random direction
     var random_angle = randf_range(0, TAU)
@@ -107,6 +119,8 @@ func queue_damage(block_index: int, amount: int):
     damage_queue.append({"index": block_index, "amount": amount})
 
 func process_damage():
+    var current_multiplier = int(pow(2, active_powerups.size()))
+    
     # Safely handle potential chain reactions (mines hitting mines)
     var safety_limit = 100
     var loops = 0
@@ -125,9 +139,9 @@ func process_damage():
                     
                     # Scoring Rules
                     if b.type == "yellow":
-                        score += 1
+                        score += 1 * current_multiplier
                     elif b.type == "orange":
-                        score += 2
+                        score += 2 * current_multiplier
                     # Mines add 0 score
                     
                     # Mine AoE Explosion Logic
@@ -142,7 +156,7 @@ func _input(event):
     if event.is_action_pressed("ui_accept"): # Press Space/Enter to pause
         is_paused = !is_paused
         
-    if is_paused:
+    if is_paused or is_game_over:
         return
         
     # Standard mouse scroll wheel
@@ -161,15 +175,41 @@ func _process(delta):
         queue_redraw()
         return
         
+    if is_game_over:
+        game_over_timer -= delta
+        if game_over_timer <= 0.0:
+            start_game()
+        queue_redraw()
+        return
+        
     # Keyboard movement (Left/Right arrows or A/D) (Inverted)
     var input_axis = Input.get_axis("ui_left", "ui_right")
     if input_axis != 0.0:
         paddle_angle -= input_axis * delta * 4.0
         
-    # Process block state animations
     if arena_flash_timer > 0.0:
         arena_flash_timer -= delta * 3.0
         
+    if splash_text_timer > 0.0:
+        splash_text_timer -= delta * 1.5
+        
+    # Process active powerups
+    for i in range(active_powerups.size() - 1, -1, -1):
+        active_powerups[i] -= delta
+        if active_powerups[i] <= 0.0:
+            active_powerups.remove_at(i)
+            
+    # Process field powerups animations & collisions
+    for i in range(field_powerups.size() - 1, -1, -1):
+        var p = field_powerups[i]
+        p.anim_timer += delta
+        if p.pos.distance_to(ball_pos) <= ball_radius + 15.0: # Powerup hit radius
+            active_powerups.append(10.0)
+            splash_text = "2X"
+            splash_text_timer = 1.0
+            field_powerups.remove_at(i)
+        
+    # Process block state animations
     var blocks_to_remove = []
     for i in range(blocks.size()):
         var b = blocks[i]
@@ -250,9 +290,11 @@ func _process(delta):
             ball_vel = ball_vel.normalized() * ball_speed
             ball_pos = center + (normal * -(arena_radius - ball_radius - 1))
             
-            # Handle block spawning based on successful paddle hits
+            var current_multiplier = int(pow(2, active_powerups.size()))
+            score += 1 * current_multiplier # point per paddle bounce
+            
+            # Handle block and powerup spawning based on successful paddle hits
             paddle_hits += 1
-            score += 1 # Added point per paddle bounce back
             if paddle_hits == 2:
                 spawn_blocks(1)
             elif paddle_hits > 2:
@@ -261,9 +303,17 @@ func _process(delta):
                     spawn_blocks(2)
                 elif roll <= 0.30:
                     spawn_blocks(1)
+                    
+                # 2% chance to spawn Powerup
+                if randf() <= 0.02:
+                    var r = randf_range(0, 200)
+                    var ang = randf_range(0, TAU)
+                    var p_pos = center + Vector2(cos(ang), sin(ang)) * r
+                    field_powerups.append({"pos": p_pos, "anim_timer": 0.0})
         else:
-            # Missed completely (0 lives)
-            start_game()
+            # Missed completely (0 lives left)
+            is_game_over = true
+            game_over_timer = 1.0
             
     queue_redraw()
 
@@ -271,13 +321,7 @@ func _draw():
     # Background
     draw_rect(get_viewport_rect(), Color.BLACK)
     
-    # Arena Outline
-    var arena_color = Color.WHITE
-    if arena_flash_timer > 0.0:
-        arena_color = Color.RED.lerp(Color.WHITE, 1.0 - arena_flash_timer)
-    draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
-    
-    # Draw Blocks
+    # Draw Blocks (always visible, even during game over)
     for b in blocks:
         var size_mult = 1.0
         var alpha = 1.0
@@ -326,6 +370,28 @@ func _draw():
                 draw_line(b.pos + Vector2(-current_size*0.3, -current_size*0.4), b.pos + Vector2(current_size*0.1, current_size*0.1), crack_color, 3.0)
             if missing_hp >= 2:
                 draw_line(b.pos + Vector2(current_size*0.1, current_size*0.1), b.pos + Vector2(-current_size*0.2, current_size*0.4), crack_color, 2.0)
+                
+    if is_game_over:
+        return # Skip drawing the rest of the game components during death delay
+        
+    # Arena Outline
+    var arena_color = Color.WHITE
+    if arena_flash_timer > 0.0:
+        arena_color = Color.RED.lerp(Color.WHITE, 1.0 - arena_flash_timer)
+    draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
+    
+    # Draw Field Powerups
+    for p in field_powerups:
+        var pulse = 1.0 + sin(p.anim_timer * 5.0) * 0.2
+        var bob = sin(p.anim_timer * 3.0) * 5.0
+        var draw_pos = p.pos + Vector2(0, bob)
+        var p_size = 15.0 * pulse
+        var points = PackedVector2Array([
+            draw_pos + Vector2(0, -p_size),
+            draw_pos + Vector2(-p_size, p_size),
+            draw_pos + Vector2(p_size, p_size)
+        ])
+        draw_colored_polygon(points, Color.LIGHT_BLUE)
     
     # Draw Red Ball
     draw_circle(ball_pos, ball_radius, Color.RED)
@@ -335,8 +401,16 @@ func _draw():
     var end_angle = paddle_angle + paddle_width / 2.0
     draw_arc(center, arena_radius, start_angle, end_angle, 64, Color("00ff00"), paddle_thickness, true)
     
-    # Draw Score
     var default_font = ThemeDB.fallback_font
+    
+    # Draw Splash Text (e.g. "2X")
+    if splash_text_timer > 0.0:
+        var f_size = 128
+        var s_size = default_font.get_string_size(splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size)
+        var s_pos = center - Vector2(s_size.x / 2.0, -s_size.y / 4.0)
+        draw_string(default_font, s_pos, splash_text, HORIZONTAL_ALIGNMENT_CENTER, -1, f_size, Color(1, 1, 1, splash_text_timer))
+    
+    # Draw Score
     var font_size = 64
     var text_size = default_font.get_string_size(str(score), HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
     var text_pos = center - Vector2(text_size.x / 2.0, -text_size.y / 4.0)
@@ -350,6 +424,14 @@ func _draw():
         var arc_start = i * (TAU / 3.0)
         var arc_end = arc_start + arc_length
         draw_arc(hud_center, hud_radius, arc_start, arc_end, 16, Color("00ff00"), 4.0, true)
+        
+    # Draw Powerup Timers HUD
+    var right_x = get_viewport_rect().size.x - 150
+    var y_offset = 50
+    for time_left in active_powerups:
+        var time_str = "2x: 00:%02d" % int(time_left)
+        draw_string(default_font, Vector2(right_x, y_offset), time_str, HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.WHITE)
+        y_offset += 40
     
     # Pause Overlay
     if is_paused:
