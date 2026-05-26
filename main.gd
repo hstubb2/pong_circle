@@ -518,7 +518,7 @@ func _draw():
     if arena_flash_timer > 0.0:
         arena_color = Color.RED.lerp(Color.WHITE, 1.0 - arena_flash_timer)
     arena_color.a *= fade_alpha
-    draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 4.0, true)
+    draw_arc(center, arena_radius, 0, TAU, 128, arena_color, 2.0, true)
     
     # Trajectory Powerup Drawing
     var has_trajectory = false
