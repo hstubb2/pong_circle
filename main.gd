@@ -439,6 +439,14 @@ func _process(delta):
             
     queue_redraw()
 
+func _get_blink_alpha(time: float) -> float:
+    if time > 3.0:
+        return 1.0
+    var freq = lerp(20.0, 5.0, time / 3.0)
+    var blink = abs(sin(time * freq))
+    var fade = clamp(time, 0.0, 1.0)
+    return blink * fade
+
 func _draw():
     var fade_alpha = 1.0
     if is_game_over:
@@ -524,10 +532,16 @@ func _draw():
     var has_trajectory = false
     var has_twin = false
     var has_triplet = false
+    var max_twin_time = 0.0
+    var max_triplet_time = 0.0
     for p in active_powerups:
         if p.type == "trajectory": has_trajectory = true
-        elif p.type == "twin": has_twin = true
-        elif p.type == "triplet": has_triplet = true
+        elif p.type == "twin":
+            has_twin = true
+            max_twin_time = max(max_twin_time, p.timer)
+        elif p.type == "triplet":
+            has_triplet = true
+            max_triplet_time = max(max_triplet_time, p.timer)
             
     if has_trajectory and not is_game_over:
         var path = predict_trajectory(2)
@@ -566,8 +580,6 @@ func _draw():
     # Draw Paddles
     var paddle_color = Color("00ff00")
     paddle_color.a *= fade_alpha
-    var clone_color = Color.BLUE
-    clone_color.a *= fade_alpha
     
     # Main Paddle
     var start_angle = paddle_angle - paddle_width / 2.0
@@ -576,11 +588,15 @@ func _draw():
     
     # Twin Clone
     if has_twin:
+        var clone_color = Color.BLUE
+        clone_color.a *= fade_alpha * _get_blink_alpha(max_twin_time)
         var ang = paddle_angle + PI
         draw_arc(center, arena_radius, ang - paddle_width / 2.0, ang + paddle_width / 2.0, 64, clone_color, paddle_thickness, true)
         
     # Triplet Clones
     if has_triplet:
+        var clone_color = Color.BLUE
+        clone_color.a *= fade_alpha * _get_blink_alpha(max_triplet_time)
         var ang1 = paddle_angle + deg_to_rad(120.0)
         draw_arc(center, arena_radius, ang1 - paddle_width / 2.0, ang1 + paddle_width / 2.0, 64, clone_color, paddle_thickness, true)
         var ang2 = paddle_angle - deg_to_rad(120.0)
